@@ -8,4 +8,5 @@ if __name__ == "__main__":
     terminated = False
     while not terminated:
         next_obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+        print(env.observation_space)
     env.close()
