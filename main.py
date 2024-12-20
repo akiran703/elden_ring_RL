@@ -20,4 +20,5 @@ if __name__ == "__main__":
     #print(env.observation_space['boss_pose'].shape[0])
     #print(env.action_space)
     model = PPO(env)
-    model.learn(20)
+    model.learn(10000)
+    

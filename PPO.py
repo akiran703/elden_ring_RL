@@ -5,13 +5,14 @@ from network import FeedForwardNN
 from torch.optim import Adam
 import numpy as np
 from torch.distributions.categorical import Categorical
+from scipy import stats
 
 
 class PPO:
     def __init__(self,env):
         # get info about the world
         self.env = env
-        self.obs_dim = 16
+        self.obs_dim = 8
         self.act_dim = 20
 
         
@@ -34,31 +35,56 @@ class PPO:
     
     def get_action(self,obs):
         #query the actor network for a mean action
-        mean = self.actor(obs)
+        #mean = self.actor(obs)
         #print('printing the mean')
         #print(mean)
         #print(mean.shape)
 
         #create multivariate normal distribution
-        dist = Categorical(logits=mean)
+        #dist = Categorical(logits=mean)
 
         #sample an action from the distribution and get its log prob
-        action = dist.sample()
+        #action = dist.sample()
         #print(action)
+        #log_prob = dist.log_prob(action)
+
+        # Query the actor network for logits (raw predictions for each action)
+        logits = self.actor(obs)
+        
+        # Convert logits to probabilities using softmax
+        prob = torch.softmax(logits, dim=-1)
+        
+        # Calculate the variance of the probabilities across actions
+        action_variance = torch.var(prob).item()  # Get variance as a scalar
+        
+        # Log the variance to track how spread out the probabilities are
+        #print(f"Action Probability Variance: {action_variance}")
+        
+        # Create Categorical distribution with logits
+        dist = Categorical(logits=logits)
+        
+        # Sample an action from the distribution and get its log prob
+        action = dist.sample()
         log_prob = dist.log_prob(action)
+
+        return action, log_prob
+
+
+
+        
 
         return action, log_prob
 
     def _init_hyperparameters(self):
         #default values
-        self.timesteps_per_batch = 48
-        self.max_timesteps_per_episode = 16
+        self.timesteps_per_batch = 48000
+        self.max_timesteps_per_episode = 16000
         self.gamma = 0.95
         self.n_updates_per_iteration = 5
         self.clip = 0.2 # As recommended by the paper
         self.lr = 0.005
         self.num_minibatches = 10
-        self.ent_coef = 0
+        self.ent_coef = 0.1
         self.max_grad_norm = 0.5
         self.lam = 0.98
         self.target_kl = 0.02
@@ -73,6 +99,8 @@ class PPO:
             
             batch_vals = []
             batch_dones = []
+            actioncount = [0] * 20
+
             
             #we clear 
             ep_rews = [] # rewards collected per episode
@@ -105,8 +133,8 @@ class PPO:
 
                     boss = torch.tensor([obs['boss_animation'], obs['boss_animation_duration'], obs['boss_hp'], 0])
                     player = torch.tensor([obs['player_animation'], obs['player_animation_duration'], obs['player_hp'], obs['player_sp']])
-                    boss_pose = torch.tensor(obs['boss_pose'])
-                    player_pose = torch.tensor(obs['player_pose'])
+                    #boss_pose = torch.tensor(obs['boss_pose'])
+                    #player_pose = torch.tensor(obs['player_pose'])
 
                     #print(boss.shape)
                     #print(player.shape)
@@ -114,7 +142,8 @@ class PPO:
                     #print(player_pose.shape)
 
 
-                    obs = torch.cat((boss, player, boss_pose, player_pose),0)
+                    #obs = torch.cat((boss, player, boss_pose, player_pose),0)
+                    obs = torch.cat((boss, player),0)
 
                     #print(obs)
                     #print(obs.shape)
@@ -127,7 +156,12 @@ class PPO:
                     val = self.critic(obs)
                     #print('we are printing the action')
                     #print(action.item())
+                    
+                    actioncount[action.item()] += 1
                     obs, rew, terminated, truncated, _ = self.env.step(action.item())
+                    print('printing the reward')
+                    print(rew)
+
 
                     # Don't really care about the difference between terminated or truncated in this, so just combine them
                     done = terminated or truncated
@@ -159,7 +193,7 @@ class PPO:
             #print(batch_acts.shape)
             #print('yo yo')
 
-            return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_dones, batch_rews, batch_vals
+            return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_dones, batch_rews, batch_vals, actioncount 
             
     #calculate the Q-values
     def compute_reward_to_go(self,batch_rews):
@@ -242,7 +276,7 @@ class PPO:
         ts_simulated_so_far = 0
         while ts_simulated_so_far < total_timesteps:
              #collect trajectories with rollout line 3 in the PP0 algo 
-             batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals = self.rollout()
+             batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph = self.rollout()
              
              #calculate advantage with GAE
              A_k = self.calculate_gae(batch_rews,batch_vals,batch_dones)
@@ -255,7 +289,10 @@ class PPO:
              #how many times we collected
              ts_simulated_so_far += np.sum(batch_lens)
 
-          
+            #plot action distribution
+             maxaction =  max(dataforgraph)
+             print(dataforgraph.index(maxaction) + 1)
+
 
              
              #doing minibatch setup
@@ -321,7 +358,7 @@ class PPO:
 
                     self.critic_optim.zero_grad()
                     critic_loss.backward()
-                    nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+                    nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
                     self.critic_optim.step()
                  if approx_kl > self.target_kl:
                      break
