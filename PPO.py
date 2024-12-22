@@ -117,6 +117,8 @@ class PPO:
 
                 # Reset the environment. sNote that obs is short for observation. 
                 obs, _ = self.env.reset()
+                prebosshealth = obs['boss_hp']
+                
                 done = False
 
                 # Run an episode for a maximum of max_timesteps_per_episode timesteps
@@ -133,6 +135,7 @@ class PPO:
 
                     boss = torch.tensor([obs['boss_animation'], obs['boss_animation_duration'], obs['boss_hp'], 0])
                     player = torch.tensor([obs['player_animation'], obs['player_animation_duration'], obs['player_hp'], obs['player_sp']])
+
                     #boss_pose = torch.tensor(obs['boss_pose'])
                     #player_pose = torch.tensor(obs['player_pose'])
 
@@ -158,9 +161,33 @@ class PPO:
                     #print(action.item())
                     
                     actioncount[action.item()] += 1
-                    obs, rew, terminated, truncated, _ = self.env.step(action.item())
-                    print('printing the reward')
-                    print(rew)
+                    obs, _, terminated, truncated, _ = self.env.step(action.item())
+                    #print('printing the reward')
+                    #print(rew
+                    #print('player_max_hp')
+                    #print(obs['player_max_hp'])
+                    #print('current player health')
+                    #print(obs['player_hp'])
+
+                    #we will calculate the rew based on the boss hp 
+                    didbosshealthchange =  prebosshealth - obs['boss_hp'] 
+                    didpositionchange = obs['player_pose']
+                    if didbosshealthchange == 0:
+                        didbosshealthchange = -1000
+                    t1 = []
+                    t1.append(obs['boss_pose'][0])
+                    t1.append(obs['boss_pose'][1])
+                    p1 = []
+                    p1.append(obs['player_pose'][0])
+                    p1.append(obs['player_pose'][1])
+
+                    if ((t1[0] -8) >= p1[0]  or p1[0] >= (t1[0] + 8)) and ((t1[1] - 10) >= p1[1]  or p1[1] >= (t1[1] + 10)) :
+                        didpositionchange = -1000
+                    else:
+                        didpositionchange = 100
+                    rew = didbosshealthchange + didpositionchange
+
+                    
 
 
                     # Don't really care about the difference between terminated or truncated in this, so just combine them
@@ -178,6 +205,8 @@ class PPO:
 
                 # Track episodic lengths and rewards
                 batch_lens.append(ep_t + 1)
+                print('pring ep_rews')
+                print(batch_rews)
                 batch_rews.append(ep_rews)
                 batch_vals.append(ep_vals)
                 batch_dones.append(ep_dones)

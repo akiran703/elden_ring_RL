@@ -6,8 +6,7 @@ from PPO import PPO
 
 if __name__ == "__main__":
     env = gymnasium.make("SoulsGymIudex-v0")
-    # obs, info = env.reset() 
-    # terminated = False
+    # obs, info = env.reset() q
     # while not terminated:
     #     next_obs, reward, terminated, truncated, info = env.step(env.action_space.wdwdwdq)
     #     print(env.observation_space)
@@ -20,5 +19,5 @@ if __name__ == "__main__":
     #print(env.observation_space['boss_pose'].shape[0])
     #print(env.action_space)
     model = PPO(env)
-    model.learn(10000)
+    model.learn(1000000)
     
