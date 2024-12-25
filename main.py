@@ -1,6 +1,7 @@
 import gymnasium
 import soulsgym
 import gym
+import torch
 from PPO import PPO
 
 
@@ -19,5 +20,7 @@ if __name__ == "__main__":
     #print(env.observation_space['boss_pose'].shape[0])
     #print(env.action_space)
     model = PPO(env)
-    model.learn(1000000)
-    
+    model.learn(100)
+    PATH='savedweights.pt'
+    #save weights
+    model.save_weights()

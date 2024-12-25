@@ -6,6 +6,7 @@ from torch.optim import Adam
 import numpy as np
 from torch.distributions.categorical import Categorical
 from scipy import stats
+import statistics
 
 
 class PPO:
@@ -14,6 +15,10 @@ class PPO:
         self.env = env
         self.obs_dim = 8
         self.act_dim = 20
+
+        #store reward and most used action
+        self.globalreward = []
+        self.globalaction = []
 
         
 
@@ -77,8 +82,8 @@ class PPO:
 
     def _init_hyperparameters(self):
         #default values
-        self.timesteps_per_batch = 48000
-        self.max_timesteps_per_episode = 16000
+        self.timesteps_per_batch = 48
+        self.max_timesteps_per_episode = 16
         self.gamma = 0.95
         self.n_updates_per_iteration = 5
         self.clip = 0.2 # As recommended by the paper
@@ -100,6 +105,7 @@ class PPO:
             batch_vals = []
             batch_dones = []
             actioncount = [0] * 20
+            trackreward = []
 
             
             #we clear 
@@ -157,6 +163,8 @@ class PPO:
                     # Note that rew is short for reward.
                     action, log_prob = self.get_action(obs)
                     val = self.critic(obs)
+                    #print('printing val type')
+                    #print(type(val))
                     #print('we are printing the action')
                     #print(action.item())
                     
@@ -186,7 +194,7 @@ class PPO:
                     else:
                         didpositionchange = 100
                     rew = didbosshealthchange + didpositionchange
-
+                    
                     
 
 
@@ -195,7 +203,11 @@ class PPO:
 
                     # Track recent reward, values, action, and action log probability
                     ep_rews.append(rew)
+                    #print('ep_rew type')
+                    #print(type(ep_rews))
                     ep_vals.append(val.flatten())
+                    #print('ep_vals type')
+                    #print(type(ep_vals))
                     batch_acts.append(action.item())
                     batch_log_probs.append(log_prob)
 
@@ -205,11 +217,15 @@ class PPO:
 
                 # Track episodic lengths and rewards
                 batch_lens.append(ep_t + 1)
-                print('pring ep_rews')
-                print(batch_rews)
+                #print('pring ep_rews')
+                #print(batch_rews)
                 batch_rews.append(ep_rews)
                 batch_vals.append(ep_vals)
                 batch_dones.append(ep_dones)
+            
+
+            #taking average of batch_rews
+            trackreward.append(statistics.mean([statistics.mean(sublist) for sublist in batch_rews]))
 
 
             # Reshape data as tensors in the shape specified in function description, before returning
@@ -222,7 +238,7 @@ class PPO:
             #print(batch_acts.shape)
             #print('yo yo')
 
-            return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_dones, batch_rews, batch_vals, actioncount 
+            return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_dones, batch_rews, batch_vals, actioncount, trackreward
             
     #calculate the Q-values
     def compute_reward_to_go(self,batch_rews):
@@ -295,6 +311,12 @@ class PPO:
         # Convert the batch_advantages list to a PyTorch tensor of type float
         return torch.tensor(batch_advantages, dtype=torch.float)
 
+    def save_weights(self):
+        print('saving weights')
+        P1 = 'savedactor.pt'
+        P2 = 'savedcritic.pt'
+        torch.save(self.actor.state_dict(), P1 )
+        torch.save(self.critic.state_dict(),P2)
 
 
 
@@ -305,7 +327,7 @@ class PPO:
         ts_simulated_so_far = 0
         while ts_simulated_so_far < total_timesteps:
              #collect trajectories with rollout line 3 in the PP0 algo 
-             batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph = self.rollout()
+             batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph,dataforreward = self.rollout()
              
              #calculate advantage with GAE
              A_k = self.calculate_gae(batch_rews,batch_vals,batch_dones)
@@ -320,7 +342,11 @@ class PPO:
 
             #plot action distribution
              maxaction =  max(dataforgraph)
-             print(dataforgraph.index(maxaction) + 1)
+             self.globalaction.append(dataforgraph.index(maxaction) + 1)
+
+            #print reward info
+             
+             self.globalreward.append(dataforreward)
 
 
              
@@ -392,6 +418,13 @@ class PPO:
                  if approx_kl > self.target_kl:
                      break
         print('done')
+        print('reward')
+        print(self.globalreward)
+        print('most used action')
+        print(self.globalaction)
+        print('hello')
+        
+        
 
 
 
