@@ -7,19 +7,27 @@ import numpy as np
 from torch.distributions.categorical import Categorical
 from scipy import stats
 import statistics
+import matplotlib.pyplot as plt
 
 
 class PPO:
     def __init__(self,env):
         # get info about the world
         self.env = env
-        self.obs_dim = 8
-        self.act_dim = 20
+        #8
+        self.obs_dim = self.get_observation_space_size()  # Dynamically get obs dim
+        #20
+        self.act_dim = self.env.action_space.n #Dynamically get act dim
 
         #store reward and most used action
         self.globalreward = []
         self.globalaction = []
 
+        # Track training progress
+        self.episode_rewards = []
+        self.mean_rewards = []
+        self.action_histories = []
+        self.episode_lengths = []
         
 
         #actor and critic
@@ -38,7 +46,18 @@ class PPO:
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
         self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
     
-    def get_action(self,obs):
+    def get_observation_space_size(self):
+      #gets total observation length
+       obs, _ = self.env.reset()
+       total_obs_length = 0
+       for value in obs.values():
+           if isinstance(value, np.ndarray):
+              total_obs_length += value.size
+           else:
+              total_obs_length += 1
+       return total_obs_length
+    
+    def get_action(self,obs, epsilon):
         #query the actor network for a mean action
         #mean = self.actor(obs)
         #print('printing the mean')
@@ -56,29 +75,31 @@ class PPO:
         # Query the actor network for logits (raw predictions for each action)
         logits = self.actor(obs)
         
+        #if random is greater than epsilon_threshold take a random action
+        if np.random.rand() < epsilon:
+                action = np.random.choice(self.act_dim)
+                action = torch.tensor(action)
+                log_prob = torch.tensor(1, dtype=torch.float)
         # Convert logits to probabilities using softmax
-        prob = torch.softmax(logits, dim=-1)
-        
-        # Calculate the variance of the probabilities across actions
-        action_variance = torch.var(prob).item()  # Get variance as a scalar
-        
-        # Log the variance to track how spread out the probabilities are
-        #print(f"Action Probability Variance: {action_variance}")
-        
-        # Create Categorical distribution with logits
-        dist = Categorical(logits=logits)
-        
-        # Sample an action from the distribution and get its log prob
-        action = dist.sample()
-        log_prob = dist.log_prob(action)
+        else:
+            prob = torch.softmax(logits, dim=-1)
+            
+            # Calculate the variance of the probabilities across actions
+            action_variance = torch.var(prob).item()  # Get variance as a scalar
+            
+            # Log the variance to track how spread out the probabilities are
+            #print(f"Action Probability Variance: {action_variance}")
+            
+            # Create Categorical distribution with logits
+            dist = Categorical(logits=logits)
+            
+            # Sample an action from the distribution and get its log prob
+            action = dist.sample()
+            log_prob = dist.log_prob(action)
 
-        return action, log_prob
+        return action.item(), log_prob
 
 
-
-        
-
-        return action, log_prob
 
     def _init_hyperparameters(self):
         #default values
@@ -86,15 +107,28 @@ class PPO:
         self.max_timesteps_per_episode = 16
         self.gamma = 0.95
         self.n_updates_per_iteration = 5
-        self.clip = 0.2 # As recommended by the paper
+        self.clip = 0.2
         self.lr = 0.005
         self.num_minibatches = 10
-        self.ent_coef = 0.1
+        self.ent_coef = 0.01  # Reduced entropy coefficient
         self.max_grad_norm = 0.5
         self.lam = 0.98
         self.target_kl = 0.02
-        
-    def rollout(self):
+        self.exploration_start = 0.2
+        self.exploration_end = 0.02
+        self.exploration_decay = 5000 # Decay rate
+
+    def preprocess_observation(self, obs):
+        # Process observation dictionary into a single tensor
+        processed_obs = []
+        for key, value in obs.items():
+            if isinstance(value, np.ndarray):
+                processed_obs.append(torch.tensor(value.flatten(), dtype=torch.float32))
+            else:
+                processed_obs.append(torch.tensor([value], dtype=torch.float32))
+        return torch.cat(processed_obs, dim=0)
+      
+    def rollout(self,epsilon_threshold=0.0):
             batch_obs = []
             batch_acts = []
             batch_log_probs = []
@@ -104,7 +138,7 @@ class PPO:
             
             batch_vals = []
             batch_dones = []
-            actioncount = [0] * 20
+            actioncount = [0] * self.act_dim
             trackreward = []
 
             
@@ -139,8 +173,8 @@ class PPO:
                     #boss_animation, boss_animation_duration, boss_hp, boss_max_hp, boss_pose, camera_pose, lock_on, phase, player_animation, player_animation_duration, player_hp, player_max_hp, player_max_sp, player_pose, player_sp = obs.values()
                     #print(boss_animation)
 
-                    boss = torch.tensor([obs['boss_animation'], obs['boss_animation_duration'], obs['boss_hp'], 0])
-                    player = torch.tensor([obs['player_animation'], obs['player_animation_duration'], obs['player_hp'], obs['player_sp']])
+                    #boss = torch.tensor([obs['boss_animation'], obs['boss_animation_duration'], obs['boss_hp'], 0])
+                    #player = torch.tensor([obs['player_animation'], obs['player_animation_duration'], obs['player_hp'], obs['player_sp']])
 
                     #boss_pose = torch.tensor(obs['boss_pose'])
                     #player_pose = torch.tensor(obs['player_pose'])
@@ -152,24 +186,28 @@ class PPO:
 
 
                     #obs = torch.cat((boss, player, boss_pose, player_pose),0)
-                    obs = torch.cat((boss, player),0)
+                    #obs = torch.cat((boss, player),0)
 
                     #print(obs)
                     #print(obs.shape)
+
+                    obs_tensor = self.preprocess_observation(obs)
+                    batch_obs.append(obs_tensor)
+
                     
-                    batch_obs.append(obs)
+                    #batch_obs.append(obs)
 
                     # Calculate action and make a step in the env. 
                     # Note that rew is short for reward.
-                    action, log_prob = self.get_action(obs)
-                    val = self.critic(obs)
+                    action, log_prob = self.get_action(obs_tensor,epsilon_threshold)
+                    val = self.critic(obs_tensor)
                     #print('printing val type')
                     #print(type(val))
                     #print('we are printing the action')
                     #print(action.item())
                     
-                    actioncount[action.item()] += 1
-                    obs, _, terminated, truncated, _ = self.env.step(action.item())
+                    actioncount[action] += 1
+                    obs, _, terminated, truncated, _ = self.env.step(action)
                     #print('printing the reward')
                     #print(rew
                     #print('player_max_hp')
@@ -179,26 +217,33 @@ class PPO:
 
                     #we will calculate the rew based on the boss hp 
                     didbosshealthchange =  prebosshealth - obs['boss_hp'] 
-                    didpositionchange = obs['player_pose']
-                    if didbosshealthchange == 0:
-                        didbosshealthchange = -1000
-                    t1 = []
-                    t1.append(obs['boss_pose'][0])
-                    t1.append(obs['boss_pose'][1])
-                    p1 = []
-                    p1.append(obs['player_pose'][0])
-                    p1.append(obs['player_pose'][1])
-
-                    if ((t1[0] -8) >= p1[0]  or p1[0] >= (t1[0] + 8)) and ((t1[1] - 10) >= p1[1]  or p1[1] >= (t1[1] + 10)) :
-                        didpositionchange = -1000
+                    #Reward for damaging the boss, and an incentive to deal damage. 
+                    if didbosshealthchange != 0:
+                        rew = 1000 * didbosshealthchange
                     else:
-                        didpositionchange = 100
-                    rew = didbosshealthchange + didpositionchange
+                        rew = -1
+                    # didpositionchange = obs['player_pose']
+                    # if didbosshealthchange == 0:
+                    #     didbosshealthchange = -1000
+                    # t1 = []
+                    # t1.append(obs['boss_pose'][0])
+                    # t1.append(obs['boss_pose'][1])
+                    # p1 = []
+                    # p1.append(obs['player_pose'][0])
+                    # p1.append(obs['player_pose'][1])
+
+                    # if ((t1[0] -8) >= p1[0]  or p1[0] >= (t1[0] + 8)) and ((t1[1] - 10) >= p1[1]  or p1[1] >= (t1[1] + 10)) :
+                    #     didpositionchange = -1000
+                    # else:
+                    #     didpositionchange = 100
+                    # rew = didbosshealthchange + didpositionchange
                     
                     
 
 
                     # Don't really care about the difference between terminated or truncated in this, so just combine them
+                    # Update for next step
+                    prebosshealth = obs['boss_hp']
                     done = terminated or truncated
 
                     # Track recent reward, values, action, and action log probability
@@ -208,7 +253,7 @@ class PPO:
                     ep_vals.append(val.flatten())
                     #print('ep_vals type')
                     #print(type(ep_vals))
-                    batch_acts.append(action.item())
+                    batch_acts.append(action)
                     batch_log_probs.append(log_prob)
 
                     # If the environment tells us the episode is terminated, break
@@ -217,8 +262,6 @@ class PPO:
 
                 # Track episodic lengths and rewards
                 batch_lens.append(ep_t + 1)
-                #print('pring ep_rews')
-                #print(batch_rews)
                 batch_rews.append(ep_rews)
                 batch_vals.append(ep_vals)
                 batch_dones.append(ep_dones)
@@ -234,9 +277,7 @@ class PPO:
             batch_obs = torch.stack(batch_obs)
             batch_acts = torch.tensor(batch_acts, dtype=torch.float)
             batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float)
-            #print('the problem')
-            #print(batch_acts.shape)
-            #print('yo yo')
+           
 
             return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_dones, batch_rews, batch_vals, actioncount, trackreward
             
@@ -267,10 +308,10 @@ class PPO:
         
         #calculate the log probs of batch actions using most recent actions in rollout
         #print(batch_obs.shape)
-        mean = self.actor(batch_obs)
+        logits = self.actor(batch_obs)
         #print(mean)
         
-        dist = Categorical(logits=mean)
+        dist = Categorical(logits=logits)
         #print('we are in inside evaluate')
         #print(dist)
         #print(batch_acts.shape)
@@ -318,16 +359,69 @@ class PPO:
         torch.save(self.actor.state_dict(), P1 )
         torch.save(self.critic.state_dict(),P2)
 
+    def plot_training_info(self):
+                # Calculate mean episode rewards
+            episode_indices = np.arange(1, len(self.episode_rewards) + 1)
+
+            # Calculate mean rewards using a rolling average
+            window_size = 20
+            rolling_mean_rewards = np.convolve(self.episode_rewards, np.ones(window_size) / window_size, mode='valid')
+
+            # Plotting mean episode rewards
+            plt.figure(figsize=(10, 6))
+            plt.plot(episode_indices[window_size - 1:], rolling_mean_rewards, label='Mean Episode Reward (Rolling Average)')
+            plt.xlabel('Episode')
+            plt.ylabel('Mean Reward')
+            plt.title('Mean Episode Rewards Over Training')
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
+            # Plotting Action Distribution
+            action_frequency = [0] * self.act_dim
+            # for each episode we calculate how many times each action has been made and keep a count
+            for action_list in self.action_histories:
+                for action_index in range(len(action_list)):
+                    action_frequency[action_index] += action_list[action_index]
 
 
+            total_count = sum(action_frequency)
+            print('we are here arent we?')
 
+
+            if total_count > 0:
+                #calculate action percentages
+                action_percentages = [count / total_count * 100 for count in action_frequency]
+
+
+                    #plot bar char
+                plt.figure(figsize=(10, 6))
+                plt.bar(range(self.act_dim), action_percentages)
+                plt.xlabel("Action")
+                plt.ylabel("Percentage of action use")
+                plt.title("Action Percentage Distribution Across Training")
+                plt.xticks(range(self.act_dim))
+                plt.grid(axis='y')
+                plt.show()
+            else:
+                print("No actions were taken, cannot plot action distribution")
+
+            # Plotting Training Progress
+            plt.figure(figsize=(10, 6))
+            plt.plot(self.globalreward)
+            plt.xlabel('Iteration')
+            plt.ylabel('Reward')
+            plt.title('Reward Over Training')
+            plt.grid(True)
+            plt.show()
 
     def learn(self, total_timesteps):
         #line 2 from the PP0 algo
         ts_simulated_so_far = 0
         while ts_simulated_so_far < total_timesteps:
+             epsilon_threshold = self.exploration_end + (self.exploration_start - self.exploration_end) * np.exp(-1 * ts_simulated_so_far / self.exploration_decay)
              #collect trajectories with rollout line 3 in the PP0 algo 
-             batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph,dataforreward = self.rollout()
+             batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph,dataforreward = self.rollout(epsilon_threshold)
              
              #calculate advantage with GAE
              A_k = self.calculate_gae(batch_rews,batch_vals,batch_dones)
@@ -340,14 +434,22 @@ class PPO:
              #how many times we collected
              ts_simulated_so_far += np.sum(batch_lens)
 
-            #plot action distribution
-             maxaction =  max(dataforgraph)
-             self.globalaction.append(dataforgraph.index(maxaction) + 1)
 
-            #print reward info
+
+            # #plot action distribution
+            #  maxaction =  max(dataforgraph)
+            #  self.globalaction.append(dataforgraph.index(maxaction) + 1)
+
+            # #print reward info
              
-             self.globalreward.append(dataforreward)
+            #  self.globalreward.append(dataforreward)
 
+
+             # Save episode length, reward and most used action
+             self.episode_rewards.extend([sum(r) for r in batch_rews])
+             self.episode_lengths.extend(batch_lens)
+             self.action_histories.append(dataforgraph)
+             self.globalreward.extend(dataforreward)
 
              
              #doing minibatch setup
@@ -418,11 +520,8 @@ class PPO:
                  if approx_kl > self.target_kl:
                      break
         print('done')
-        print('reward')
-        print(self.globalreward)
-        print('most used action')
-        print(self.globalaction)
-        print('hello')
+        self.plot_training_info()
+
         
         
 
