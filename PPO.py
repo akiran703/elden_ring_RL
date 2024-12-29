@@ -103,8 +103,8 @@ class PPO:
 
     def _init_hyperparameters(self):
         #default values
-        self.timesteps_per_batch = 48
-        self.max_timesteps_per_episode = 16
+        self.timesteps_per_batch = 48000
+        self.max_timesteps_per_episode = 16000
         self.gamma = 0.95
         self.n_updates_per_iteration = 5
         self.clip = 0.2
@@ -206,7 +206,7 @@ class PPO:
                     #print('we are printing the action')
                     #print(action.item())
                     
-                    actioncount[action] += 1
+                    
                     obs, _, terminated, truncated, _ = self.env.step(action)
                     #print('printing the reward')
                     #print(rew
@@ -220,6 +220,7 @@ class PPO:
                     #Reward for damaging the boss, and an incentive to deal damage. 
                     if didbosshealthchange != 0:
                         rew = 1000 * didbosshealthchange
+                        rew = int(rew.item())
                     else:
                         rew = -1
                     # didpositionchange = obs['player_pose']
@@ -238,8 +239,7 @@ class PPO:
                     #     didpositionchange = 100
                     # rew = didbosshealthchange + didpositionchange
                     
-                    
-
+        
 
                     # Don't really care about the difference between terminated or truncated in this, so just combine them
                     # Update for next step
@@ -304,7 +304,7 @@ class PPO:
     #predicited values
     def evaluate(self,batch_obs,batch_acts):
         #print(type(batch_acts))
-        V = self.critic(batch_obs).squeeze()
+        V = self.critic(batch_obs)
         
         #calculate the log probs of batch actions using most recent actions in rollout
         #print(batch_obs.shape)
@@ -381,13 +381,11 @@ class PPO:
             action_frequency = [0] * self.act_dim
             # for each episode we calculate how many times each action has been made and keep a count
             for action_list in self.action_histories:
-                for action_index in range(len(action_list)):
-                    action_frequency[action_index] += action_list[action_index]
-
+                for action_index in action_list:
+                    action_frequency[action_index] += 1
 
             total_count = sum(action_frequency)
-            print('we are here arent we?')
-
+            
 
             if total_count > 0:
                 #calculate action percentages
@@ -448,9 +446,12 @@ class PPO:
              # Save episode length, reward and most used action
              self.episode_rewards.extend([sum(r) for r in batch_rews])
              self.episode_lengths.extend(batch_lens)
-             self.action_histories.append(dataforgraph)
-             self.globalreward.extend(dataforreward)
 
+             episode_actions = []
+             for action in batch_acts:
+                 episode_actions.append(action.item())
+             self.action_histories.append(episode_actions)
+             self.globalreward.extend(dataforreward)
              
              #doing minibatch setup
              step = batch_obs.size(0)
@@ -498,7 +499,7 @@ class PPO:
 
                     actor_loss = (-torch.min(surr1, surr2)).mean()
 
-                    critic_loss = nn.MSELoss()(V, mini_rtgs)
+                    critic_loss = nn.MSELoss()(V.flatten(), mini_rtgs)
 
                     # Entropy Regularization
                     # to ensure balance of exploration and exploitation, we incorporate entropy into the loss function, resulting in more versatile actions taking place
