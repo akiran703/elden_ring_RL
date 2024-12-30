@@ -28,6 +28,11 @@ class PPO:
         self.mean_rewards = []
         self.action_histories = []
         self.episode_lengths = []
+
+         # Track loss and KL divergence
+        self.actor_losses = []
+        self.critic_losses = []
+        self.kl_divergences = []
         
 
         #actor and critic
@@ -107,8 +112,8 @@ class PPO:
         self.max_timesteps_per_episode = 16000
         self.gamma = 0.95
         self.n_updates_per_iteration = 5
-        self.clip = 0.2
-        self.lr = 0.005
+        self.clip = 0.1
+        self.lr = 0.0005
         self.num_minibatches = 10
         self.ent_coef = 0.01  # Reduced entropy coefficient
         self.max_grad_norm = 0.5
@@ -208,6 +213,7 @@ class PPO:
                     
                     
                     obs, _, terminated, truncated, _ = self.env.step(action)
+                    
                     #print('printing the reward')
                     #print(rew
                     #print('player_max_hp')
@@ -382,7 +388,7 @@ class PPO:
             # for each episode we calculate how many times each action has been made and keep a count
             for action_list in self.action_histories:
                 for action_index in action_list:
-                    action_frequency[action_index] += 1
+                    action_frequency[int(action_index)] += 1
 
             total_count = sum(action_frequency)
             
@@ -410,6 +416,28 @@ class PPO:
             plt.xlabel('Iteration')
             plt.ylabel('Reward')
             plt.title('Reward Over Training')
+            plt.grid(True)
+            plt.show()
+
+    def plot_loss_kl(self):
+            # Plotting Actor and Critic Losses
+            plt.figure(figsize=(10, 6))
+            plt.plot(self.actor_losses, label='Actor Loss')
+            plt.plot(self.critic_losses, label='Critic Loss')
+            plt.xlabel('Update Iteration')
+            plt.ylabel('Loss')
+            plt.title('Actor and Critic Loss Over Training')
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
+            # Plotting KL Divergence
+            plt.figure(figsize=(10, 6))
+            plt.plot(self.kl_divergences, label='KL Divergence')
+            plt.xlabel('Update Iteration')
+            plt.ylabel('KL Divergence')
+            plt.title('KL Divergence Over Training')
+            plt.legend()
             plt.grid(True)
             plt.show()
 
@@ -449,7 +477,7 @@ class PPO:
 
              episode_actions = []
              for action in batch_acts:
-                 episode_actions.append(action.item())
+                 episode_actions.append(int(action.item()))
              self.action_histories.append(episode_actions)
              self.globalreward.extend(dataforreward)
              
@@ -518,10 +546,17 @@ class PPO:
                     critic_loss.backward()
                     nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
                     self.critic_optim.step()
+
+                 #store metrics
+                 self.actor_losses.append(actor_loss.item())
+                 self.critic_losses.append(critic_loss.item())
+                 self.kl_divergences.append(approx_kl.item())
+
                  if approx_kl > self.target_kl:
                      break
         print('done')
         self.plot_training_info()
+        self.plot_loss_kl()
 
         
         

@@ -14,7 +14,7 @@ if __name__ == "__main__":
     env = gymnasium.make("SoulsGymIudex-v0")
  
     model = PPO(env)
-    model.learn(100000)
+    model.learn(300000)
     PATH='savedweights.pt'       
     #save weights
     model.save_weights()
