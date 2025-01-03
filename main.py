@@ -12,9 +12,12 @@ if __name__ == "__main__":
     max_episode_steps=2000000,
     nondeterministic=True)
     env = gymnasium.make("SoulsGymIudex-v0")
- 
-    model = PPO(env)
-    model.learn(300000)
+
+    actor_path = "./savedactor.pt"
+    critic_path = "./savedcritic.pt"
+
+    model = PPO(env, actor_path, critic_path)
+    model.learn(10000)
     PATH='savedweights.pt'       
     #save weights
     model.save_weights()

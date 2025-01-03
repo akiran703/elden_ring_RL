@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 
 class PPO:
-    def __init__(self,env):
+    def __init__(self,env, actor_path = None, critic_path= None):
         # get info about the world
         self.env = env
         #8
@@ -50,6 +50,19 @@ class PPO:
         #initalize the critic and actor optimizer
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
         self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
+
+        #if paths are passed then load the weights
+        if actor_path and critic_path:
+            self.load_weights(actor_path,critic_path)
+
+    def load_weights(self, actor_path, critic_path):
+        print('loading weights')
+        try:
+            self.actor.load_state_dict(torch.load(actor_path, weights_only=True))
+            self.critic.load_state_dict(torch.load(critic_path, weights_only=True))
+            print("Loaded weights successfully")
+        except Exception as e:
+            print(f"Could not load weights: {e}")
     
     def get_observation_space_size(self):
       #gets total observation length
@@ -108,20 +121,21 @@ class PPO:
 
     def _init_hyperparameters(self):
         #default values
-        self.timesteps_per_batch = 48000
-        self.max_timesteps_per_episode = 16000
+        self.timesteps_per_batch = 480
+        self.max_timesteps_per_episode = 160
         self.gamma = 0.95
         self.n_updates_per_iteration = 5
-        self.clip = 0.1
-        self.lr = 0.0005
+        self.clip = 0.3
+        self.lr = 0.01
         self.num_minibatches = 10
-        self.ent_coef = 0.01  # Reduced entropy coefficient
+        self.ent_coef = 0  # Reduced entropy coefficient
         self.max_grad_norm = 0.5
         self.lam = 0.98
         self.target_kl = 0.02
         self.exploration_start = 0.2
         self.exploration_end = 0.02
         self.exploration_decay = 5000 # Decay rate
+        
 
     def preprocess_observation(self, obs):
         # Process observation dictionary into a single tensor
@@ -152,7 +166,7 @@ class PPO:
             ep_vals = [] # values collected per episode
             ep_dones = [] #dones collected per episode
             t = 0 # Keeps track of how many timesteps we've run so far this batch
-
+            episode_actions_temp = [] #temporary list for logging actions
             # Keep simulating until we've run more than or equal to specified timesteps per batch
             while t < self.timesteps_per_batch:
                 ep_rews = [] # rewards collected per episode
@@ -261,7 +275,7 @@ class PPO:
                     #print(type(ep_vals))
                     batch_acts.append(action)
                     batch_log_probs.append(log_prob)
-
+                    episode_actions_temp.append([int(action)])
                     # If the environment tells us the episode is terminated, break
                     if done:
                         break
@@ -285,7 +299,7 @@ class PPO:
             batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float)
            
 
-            return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_dones, batch_rews, batch_vals, actioncount, trackreward
+            return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_dones, batch_rews, batch_vals, actioncount, trackreward, episode_actions_temp
             
     #calculate the Q-values
     def compute_reward_to_go(self,batch_rews):
@@ -444,10 +458,11 @@ class PPO:
     def learn(self, total_timesteps):
         #line 2 from the PP0 algo
         ts_simulated_so_far = 0
+        self.action_histories_temp = []
         while ts_simulated_so_far < total_timesteps:
              epsilon_threshold = self.exploration_end + (self.exploration_start - self.exploration_end) * np.exp(-1 * ts_simulated_so_far / self.exploration_decay)
              #collect trajectories with rollout line 3 in the PP0 algo 
-             batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph,dataforreward = self.rollout(epsilon_threshold)
+             batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph,dataforreward,episode_actions_temp = self.rollout(epsilon_threshold)
              
              #calculate advantage with GAE
              A_k = self.calculate_gae(batch_rews,batch_vals,batch_dones)
@@ -460,27 +475,13 @@ class PPO:
              #how many times we collected
              ts_simulated_so_far += np.sum(batch_lens)
 
-
-
-            # #plot action distribution
-            #  maxaction =  max(dataforgraph)
-            #  self.globalaction.append(dataforgraph.index(maxaction) + 1)
-
-            # #print reward info
-             
-            #  self.globalreward.append(dataforreward)
-
-
              # Save episode length, reward and most used action
              self.episode_rewards.extend([sum(r) for r in batch_rews])
              self.episode_lengths.extend(batch_lens)
-
-             episode_actions = []
-             for action in batch_acts:
-                 episode_actions.append(int(action.item()))
-             self.action_histories.append(episode_actions)
+             
              self.globalreward.extend(dataforreward)
              
+             self.action_histories_temp.extend(episode_actions_temp)
              #doing minibatch setup
              step = batch_obs.size(0)
              inds = np.arange(step)
@@ -496,7 +497,8 @@ class PPO:
                  new_lr = max(new_lr, 0.0)
                  self.actor_optim.param_groups[0]["lr"] = new_lr
                  self.critic_optim.param_groups[0]["lr"] = new_lr
-
+                 
+                 print(f"Current LR: {self.actor_optim.param_groups[0]['lr']}")
 
                  np.random.shuffle(inds)
                  for start in range(0, step, minibatch_size):
@@ -508,14 +510,24 @@ class PPO:
                     mini_advantage = A_k[idx]
                     mini_rtgs = batch_rtgs[idx]
 
+                    if torch.all(mini_advantage == 0):
+                        print('the advantage is zero')
+                        continue
+
                     # Calculate V_phi and pi_theta(a_t | s_t) 
                     V, curr_log_probs, entropy = self.evaluate(mini_obs, mini_acts)
+
+                    # print(f"curr_log_probs: {curr_log_probs.mean()}")
+                    # print(f"mini_log_prob: {mini_log_prob.mean()}")
+                    # print(f"entropy: {entropy.mean()}")
 
 
                     logratios = curr_log_probs - mini_log_prob
                     #calculate ratios
                     ratios = torch.exp(logratios)
                     approx_kl = ((ratios-1) - logratios).mean()
+
+                    # print(f"ratios {ratios.mean()}")
 
 
                     #calculate ratios
@@ -524,10 +536,21 @@ class PPO:
                     #calculate surrogate losses
                     surr1 = ratios * mini_advantage
                     surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * mini_advantage
+                    if torch.isnan(surr1).any() or torch.isnan(surr2).any():
+                        print("NaN surrogate loss detected")
+
+
+                    # print(f"surr1: {surr1.mean()}")
+                    # print(f"surr2: {surr2.mean()}")
+                    
+                    # print(f"mini_advantage: {mini_advantage.mean()}")
 
                     actor_loss = (-torch.min(surr1, surr2)).mean()
 
                     critic_loss = nn.MSELoss()(V.flatten(), mini_rtgs)
+
+                    print(f"Actor Loss Before Entropy: {actor_loss}")
+                    
 
                     # Entropy Regularization
                     # to ensure balance of exploration and exploitation, we incorporate entropy into the loss function, resulting in more versatile actions taking place
@@ -535,9 +558,19 @@ class PPO:
                     # Discount entropy loss by given coefficient
                     actor_loss = actor_loss - self.ent_coef * entropy_loss
 
+                    print(f"Actor Loss After Entropy: {actor_loss}")
+
                     # Calculate gradients and perform backward propagation for actor network
                     self.actor_optim.zero_grad()
                     actor_loss.backward()
+                    for name, param in self.actor.named_parameters():
+                        if param.grad is not None:
+                            if torch.isnan(param.grad.abs().mean()):
+                                    print(f"Actor Parameter {name} Gradient: NaN")
+                            else:
+                                print(f"Actor Parameter {name} Gradient: {param.grad.abs().mean()}")
+                        else:
+                                print(f"Actor Parameter {name} Gradient: None")
                     nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
                     self.actor_optim.step()
 
@@ -554,6 +587,7 @@ class PPO:
 
                  if approx_kl > self.target_kl:
                      break
+        self.action_histories = self.action_histories_temp
         print('done')
         self.plot_training_info()
         self.plot_loss_kl()
