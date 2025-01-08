@@ -16,7 +16,7 @@ if __name__ == "__main__":
     actor_path = "./savedactor.pt"
     critic_path = "./savedcritic.pt"
 
-    model = PPO(env, actor_path, critic_path)
+    model = PPO(env)
     model.learn(10000)
     PATH='savedweights.pt'       
     #save weights

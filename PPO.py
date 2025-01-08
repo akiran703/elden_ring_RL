@@ -124,15 +124,15 @@ class PPO:
         self.timesteps_per_batch = 480
         self.max_timesteps_per_episode = 160
         self.gamma = 0.95
-        self.n_updates_per_iteration = 5
+        self.n_updates_per_iteration = 10
         self.clip = 0.3
         self.lr = 0.01
         self.num_minibatches = 10
-        self.ent_coef = 0  # Reduced entropy coefficient
+        self.ent_coef = 0.1  # Reduced entropy coefficient
         self.max_grad_norm = 0.5
         self.lam = 0.98
-        self.target_kl = 0.02
-        self.exploration_start = 0.2
+        self.target_kl = 0.05
+        self.exploration_start = 0.7
         self.exploration_end = 0.02
         self.exploration_decay = 5000 # Decay rate
         
@@ -177,6 +177,7 @@ class PPO:
                 # Reset the environment. sNote that obs is short for observation. 
                 obs, _ = self.env.reset()
                 prebosshealth = obs['boss_hp']
+                prehealth = obs["player_hp"]
                 
                 done = False
 
@@ -227,42 +228,59 @@ class PPO:
                     
                     
                     obs, _, terminated, truncated, _ = self.env.step(action)
-                    
-                    #print('printing the reward')
-                    #print(rew
-                    #print('player_max_hp')
-                    #print(obs['player_max_hp'])
-                    #print('current player health')
-                    #print(obs['player_hp'])
+                    #Reward Shaping Constants
+                    BOSS_DAMAGE_REWARD = 1000
+                    PLAYER_DAMAGE_PENALTY = -100
+                    NO_DAMAGE_REWARD = 5
+                    NO_BOSS_DAMAGE_PENALTY = -10
+                    BOSS_HEALTH_REWARD = 1
+                    rew = 0
 
                     #we will calculate the rew based on the boss hp 
                     didbosshealthchange =  prebosshealth - obs['boss_hp'] 
                     #Reward for damaging the boss, and an incentive to deal damage. 
-                    if didbosshealthchange != 0:
-                        rew = 1000 * didbosshealthchange
-                        rew = int(rew.item())
-                    else:
-                        rew = -1
-                    # didpositionchange = obs['player_pose']
-                    # if didbosshealthchange == 0:
-                    #     didbosshealthchange = -1000
-                    # t1 = []
-                    # t1.append(obs['boss_pose'][0])
-                    # t1.append(obs['boss_pose'][1])
-                    # p1 = []
-                    # p1.append(obs['player_pose'][0])
-                    # p1.append(obs['player_pose'][1])
+                    # if didbosshealthchange != 0:
+                    #             # Reward for Damaging the boss
+                    #     rew += (BOSS_DAMAGE_REWARD * didbosshealthchange)/1000
+                    #     rew = int(rew.item()) #convert to int
 
-                    # if ((t1[0] -8) >= p1[0]  or p1[0] >= (t1[0] + 8)) and ((t1[1] - 10) >= p1[1]  or p1[1] >= (t1[1] + 10)) :
-                    #     didpositionchange = -1000
+                    #     if obs["player_hp"] < prehealth:
+                    #         # Penalty for getting hit while damaging the boss
+                    #         rew += PLAYER_DAMAGE_PENALTY
+                    # elif obs["player_hp"] >= prehealth:
+                    #     # Reward for surviving if the boss is not hit
+                    #     #rew += NO_DAMAGE_REWARD
+                    #     rew-=1
                     # else:
-                    #     didpositionchange = 100
-                    # rew = didbosshealthchange + didpositionchange
-                    
-        
+                    #     # Penalty for getting hit if the boss isn't hit
+                    #     rew += NO_BOSS_DAMAGE_PENALTY
+                    if didbosshealthchange != 0:  # If boss took damage
+                            # Reward for damaging the boss based on a normalized value
+                            rew +=  int((BOSS_DAMAGE_REWARD * didbosshealthchange)/1000)
 
+                            if obs["player_hp"] < prehealth: # if player gets damaged while hitting the boss
+                                rew += PLAYER_DAMAGE_PENALTY # Add penalty for getting hit
+
+                    elif obs["player_hp"] <= 0:
+                        #If the player took damage and did not damage the boss
+                            rew += NO_BOSS_DAMAGE_PENALTY  # Add penalty for getting hit when no boss damage
+
+
+                        # Reward for moving boss health closer to 0
+                    rew += int(BOSS_HEALTH_REWARD * (obs['boss_max_hp']-obs["boss_hp"])/1000)
+                    
+
+                     
+                    print(f"Action: {action}, Reward: {rew}, boss health change: {didbosshealthchange}")
+
+
+
+
+                    
+    
                     # Don't really care about the difference between terminated or truncated in this, so just combine them
                     # Update for next step
+                    prehealth = obs["player_hp"]
                     prebosshealth = obs['boss_hp']
                     done = terminated or truncated
 
@@ -325,12 +343,15 @@ class PPO:
     def evaluate(self,batch_obs,batch_acts):
         #print(type(batch_acts))
         V = self.critic(batch_obs)
+        print(f"Critic Value: {V.mean()}")
         
         #calculate the log probs of batch actions using most recent actions in rollout
         #print(batch_obs.shape)
         logits = self.actor(batch_obs)
         #print(mean)
         
+        print(f"Action Probs: {torch.softmax(logits, dim=-1).mean(dim=0)}")
+
         dist = Categorical(logits=logits)
         #print('we are in inside evaluate')
         #print(dist)
@@ -459,10 +480,14 @@ class PPO:
         #line 2 from the PP0 algo
         ts_simulated_so_far = 0
         self.action_histories_temp = []
+        random_action_steps = 1000
         while ts_simulated_so_far < total_timesteps:
              epsilon_threshold = self.exploration_end + (self.exploration_start - self.exploration_end) * np.exp(-1 * ts_simulated_so_far / self.exploration_decay)
              #collect trajectories with rollout line 3 in the PP0 algo 
-             batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph,dataforreward,episode_actions_temp = self.rollout(epsilon_threshold)
+             if ts_simulated_so_far < random_action_steps:
+                batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph,dataforreward,episode_actions_temp = self.rollout(1.0)
+             else:
+                batch_obs, batch_acts, batch_logs_probs, batch_rtgs, batch_lens,batch_dones, batch_rews, batch_vals, dataforgraph,dataforreward,episode_actions_temp = self.rollout(epsilon_threshold)
              
              #calculate advantage with GAE
              A_k = self.calculate_gae(batch_rews,batch_vals,batch_dones)
@@ -498,7 +523,7 @@ class PPO:
                  self.actor_optim.param_groups[0]["lr"] = new_lr
                  self.critic_optim.param_groups[0]["lr"] = new_lr
                  
-                 print(f"Current LR: {self.actor_optim.param_groups[0]['lr']}")
+                 #print(f"Current LR: {self.actor_optim.param_groups[0]['lr']}")
 
                  np.random.shuffle(inds)
                  for start in range(0, step, minibatch_size):
@@ -517,6 +542,7 @@ class PPO:
                     # Calculate V_phi and pi_theta(a_t | s_t) 
                     V, curr_log_probs, entropy = self.evaluate(mini_obs, mini_acts)
 
+                    print(f"mini_advantage: {mini_advantage.mean()}")
                     # print(f"curr_log_probs: {curr_log_probs.mean()}")
                     # print(f"mini_log_prob: {mini_log_prob.mean()}")
                     # print(f"entropy: {entropy.mean()}")
@@ -535,7 +561,8 @@ class PPO:
 
                     #calculate surrogate losses
                     surr1 = ratios * mini_advantage
-                    surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * mini_advantage
+                    #surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * mini_advantage
+                    surr2 = ratios * mini_advantage
                     if torch.isnan(surr1).any() or torch.isnan(surr2).any():
                         print("NaN surrogate loss detected")
 
@@ -543,13 +570,13 @@ class PPO:
                     # print(f"surr1: {surr1.mean()}")
                     # print(f"surr2: {surr2.mean()}")
                     
-                    # print(f"mini_advantage: {mini_advantage.mean()}")
+                    
 
                     actor_loss = (-torch.min(surr1, surr2)).mean()
 
                     critic_loss = nn.MSELoss()(V.flatten(), mini_rtgs)
 
-                    print(f"Actor Loss Before Entropy: {actor_loss}")
+                    #print(f"Actor Loss Before Entropy: {actor_loss}")
                     
 
                     # Entropy Regularization
@@ -558,7 +585,7 @@ class PPO:
                     # Discount entropy loss by given coefficient
                     actor_loss = actor_loss - self.ent_coef * entropy_loss
 
-                    print(f"Actor Loss After Entropy: {actor_loss}")
+                    #print(f"Actor Loss After Entropy: {actor_loss}")
 
                     # Calculate gradients and perform backward propagation for actor network
                     self.actor_optim.zero_grad()
@@ -567,8 +594,8 @@ class PPO:
                         if param.grad is not None:
                             if torch.isnan(param.grad.abs().mean()):
                                     print(f"Actor Parameter {name} Gradient: NaN")
-                            else:
-                                print(f"Actor Parameter {name} Gradient: {param.grad.abs().mean()}")
+                            #else:
+                                #print(f"Actor Parameter {name} Gradient: {param.grad.abs().mean()}")
                         else:
                                 print(f"Actor Parameter {name} Gradient: None")
                     nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
