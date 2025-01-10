@@ -231,43 +231,32 @@ class PPO:
                     #Reward Shaping Constants
                     BOSS_DAMAGE_REWARD = 1000
                     PLAYER_DAMAGE_PENALTY = -100
-                    NO_DAMAGE_REWARD = 5
+                    NO_DAMAGE_REWARD = 1
                     NO_BOSS_DAMAGE_PENALTY = -10
                     BOSS_HEALTH_REWARD = 1
                     rew = 0
 
                     #we will calculate the rew based on the boss hp 
                     didbosshealthchange =  prebosshealth - obs['boss_hp'] 
-                    #Reward for damaging the boss, and an incentive to deal damage. 
-                    # if didbosshealthchange != 0:
-                    #             # Reward for Damaging the boss
-                    #     rew += (BOSS_DAMAGE_REWARD * didbosshealthchange)/1000
-                    #     rew = int(rew.item()) #convert to int
+                  
+                    didbosshealthchange =  prebosshealth - obs['boss_hp'] 
+                    
+                    if didbosshealthchange != 0:
+                        rew +=  int((BOSS_DAMAGE_REWARD * didbosshealthchange)/1000)
 
-                    #     if obs["player_hp"] < prehealth:
-                    #         # Penalty for getting hit while damaging the boss
-                    #         rew += PLAYER_DAMAGE_PENALTY
-                    # elif obs["player_hp"] >= prehealth:
-                    #     # Reward for surviving if the boss is not hit
-                    #     #rew += NO_DAMAGE_REWARD
-                    #     rew-=1
-                    # else:
-                    #     # Penalty for getting hit if the boss isn't hit
-                    #     rew += NO_BOSS_DAMAGE_PENALTY
-                    if didbosshealthchange != 0:  # If boss took damage
-                            # Reward for damaging the boss based on a normalized value
-                            rew +=  int((BOSS_DAMAGE_REWARD * didbosshealthchange)/1000)
+                        if obs["player_hp"] < prehealth:
+                            rew += PLAYER_DAMAGE_PENALTY
+                    elif obs["player_hp"] >= prehealth:
+                        rew += NO_DAMAGE_REWARD
 
-                            if obs["player_hp"] < prehealth: # if player gets damaged while hitting the boss
-                                rew += PLAYER_DAMAGE_PENALTY # Add penalty for getting hit
-
-                    elif obs["player_hp"] <= 0:
-                        #If the player took damage and did not damage the boss
-                            rew += NO_BOSS_DAMAGE_PENALTY  # Add penalty for getting hit when no boss damage
-
-
-                        # Reward for moving boss health closer to 0
                     rew += int(BOSS_HEALTH_REWARD * (obs['boss_max_hp']-obs["boss_hp"])/1000)
+                    
+                    #Calculate proximity to the boss:
+                    boss_x, boss_y = obs['boss_pose'][0], obs['boss_pose'][1]
+                    player_x, player_y = obs['player_pose'][0], obs['player_pose'][1]
+                    distance = np.sqrt((boss_x - player_x)**2 + (boss_y - player_y)**2)
+                    proximity_reward = max(10 - distance,0)
+                    rew += proximity_reward
                     
 
                      
