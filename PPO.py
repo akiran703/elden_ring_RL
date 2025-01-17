@@ -397,11 +397,11 @@ class PPO:
         torch.save(self.actor.state_dict(), P1 )
         torch.save(self.critic.state_dict(),P2)
 
-    def plot_training_info(self):
+    def save_trial_plots(self, output_dir, trial_number):
+        os.makedirs(output_dir, exist_ok=True)
+
         # Calculate mean episode rewards
         episode_indices = np.arange(1, len(self.episode_rewards) + 1)
-
-        # Calculate mean rewards using a rolling average
         window_size = 20
         rolling_mean_rewards = np.convolve(self.episode_rewards, np.ones(window_size) / window_size, mode='valid')
 
@@ -413,7 +413,8 @@ class PPO:
         plt.title('Mean Episode Rewards Over Training')
         plt.legend()
         plt.grid(True)
-        plt.show()
+        plt.savefig(os.path.join(output_dir, f"trial_{trial_number}_mean_reward.png"))
+        plt.close()
 
         # Plotting Action Distribution
         action_frequency = [0] * self.act_dim
@@ -426,11 +427,11 @@ class PPO:
         
 
         if total_count > 0:
-            #calculate action percentages
+                #calculate action percentages
             action_percentages = [count / total_count * 100 for count in action_frequency]
 
 
-                #plot bar char
+            #plot bar char
             plt.figure(figsize=(10, 6))
             plt.bar(range(self.act_dim), action_percentages)
             plt.xlabel("Action")
@@ -438,7 +439,8 @@ class PPO:
             plt.title("Action Percentage Distribution Across Training")
             plt.xticks(range(self.act_dim))
             plt.grid(axis='y')
-            plt.show()
+            plt.savefig(os.path.join(output_dir, f"trial_{trial_number}_action_distribution.png"))
+            plt.close()
         else:
             print("No actions were taken, cannot plot action distribution")
 
@@ -449,29 +451,107 @@ class PPO:
         plt.ylabel('Reward')
         plt.title('Reward Over Training')
         plt.grid(True)
-        plt.show()
+        plt.savefig(os.path.join(output_dir, f"trial_{trial_number}_reward_over_training.png"))
+        plt.close()
+            
+         # Plotting Actor and Critic Losses
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.actor_losses, label='Actor Loss')
+        plt.plot(self.critic_losses, label='Critic Loss')
+        plt.xlabel('Update Iteration')
+        plt.ylabel('Loss')
+        plt.title('Actor and Critic Loss Over Training')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(output_dir, f"trial_{trial_number}_losses.png"))
+        plt.close()
 
-    def plot_loss_kl(self):
-            # Plotting Actor and Critic Losses
-            plt.figure(figsize=(10, 6))
-            plt.plot(self.actor_losses, label='Actor Loss')
-            plt.plot(self.critic_losses, label='Critic Loss')
-            plt.xlabel('Update Iteration')
-            plt.ylabel('Loss')
-            plt.title('Actor and Critic Loss Over Training')
-            plt.legend()
-            plt.grid(True)
-            plt.show()
+        # Plotting KL Divergence
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.kl_divergences, label='KL Divergence')
+        plt.xlabel('Update Iteration')
+        plt.ylabel('KL Divergence')
+        plt.title('KL Divergence Over Training')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(output_dir, f"trial_{trial_number}_kl_divergence.png"))
+        plt.close()
 
-            # Plotting KL Divergence
-            plt.figure(figsize=(10, 6))
-            plt.plot(self.kl_divergences, label='KL Divergence')
-            plt.xlabel('Update Iteration')
-            plt.ylabel('KL Divergence')
-            plt.title('KL Divergence Over Training')
-            plt.legend()
-            plt.grid(True)
-            plt.show()
+    # def plot_training_info(self):
+    #     # Calculate mean episode rewards
+    #     episode_indices = np.arange(1, len(self.episode_rewards) + 1)
+
+    #     # Calculate mean rewards using a rolling average
+    #     window_size = 20
+    #     rolling_mean_rewards = np.convolve(self.episode_rewards, np.ones(window_size) / window_size, mode='valid')
+
+    #     # Plotting mean episode rewards
+    #     plt.figure(figsize=(10, 6))
+    #     plt.plot(episode_indices[window_size - 1:], rolling_mean_rewards, label='Mean Episode Reward (Rolling Average)')
+    #     plt.xlabel('Episode')
+    #     plt.ylabel('Mean Reward')
+    #     plt.title('Mean Episode Rewards Over Training')
+    #     plt.legend()
+    #     plt.grid(True)
+    #     plt.show()
+
+    #     # Plotting Action Distribution
+    #     action_frequency = [0] * self.act_dim
+    #     # for each episode we calculate how many times each action has been made and keep a count
+    #     for action_list in self.action_histories:
+    #         for action_index in action_list:
+    #             action_frequency[int(action_index)] += 1
+
+    #     total_count = sum(action_frequency)
+        
+
+    #     if total_count > 0:
+    #         #calculate action percentages
+    #         action_percentages = [count / total_count * 100 for count in action_frequency]
+
+
+    #             #plot bar char
+    #         plt.figure(figsize=(10, 6))
+    #         plt.bar(range(self.act_dim), action_percentages)
+    #         plt.xlabel("Action")
+    #         plt.ylabel("Percentage of action use")
+    #         plt.title("Action Percentage Distribution Across Training")
+    #         plt.xticks(range(self.act_dim))
+    #         plt.grid(axis='y')
+    #         plt.show()
+    #     else:
+    #         print("No actions were taken, cannot plot action distribution")
+
+    #     # Plotting Training Progress
+    #     plt.figure(figsize=(10, 6))
+    #     plt.plot(self.globalreward)
+    #     plt.xlabel('Iteration')
+    #     plt.ylabel('Reward')
+    #     plt.title('Reward Over Training')
+    #     plt.grid(True)
+    #     plt.show()
+
+    # def plot_loss_kl(self):
+    #         # Plotting Actor and Critic Losses
+    #         plt.figure(figsize=(10, 6))
+    #         plt.plot(self.actor_losses, label='Actor Loss')
+    #         plt.plot(self.critic_losses, label='Critic Loss')
+    #         plt.xlabel('Update Iteration')
+    #         plt.ylabel('Loss')
+    #         plt.title('Actor and Critic Loss Over Training')
+    #         plt.legend()
+    #         plt.grid(True)
+    #         plt.show()
+
+    #         # Plotting KL Divergence
+    #         plt.figure(figsize=(10, 6))
+    #         plt.plot(self.kl_divergences, label='KL Divergence')
+    #         plt.xlabel('Update Iteration')
+    #         plt.ylabel('KL Divergence')
+    #         plt.title('KL Divergence Over Training')
+    #         plt.legend()
+    #         plt.grid(True)
+    #         plt.show()
 
     def learn(self, total_timesteps):
          #line 2 from the PP0 algo

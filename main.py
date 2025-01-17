@@ -4,6 +4,7 @@ import gym
 import torch
 from PPO import PPO
 import optuna
+import os
 
 
 # if __name__ == "__main__":
@@ -34,6 +35,10 @@ def objective(trial):
     model = PPO(env, trial = trial)
     total_timesteps = 5000
     mean_reward = model.learn(total_timesteps)
+    output_dir = f"trial_{trial.number}_results"  # Create a directory specific to the trial
+    model.save_trial_plots(output_dir,trial.number)
+    output_parent_dir = '.\fullcollections'
+    os.path.join(output_parent_dir,output_dir)
     return mean_reward
 def run_optuna_study():
 
